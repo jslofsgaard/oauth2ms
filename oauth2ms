@@ -196,7 +196,7 @@ def build_app_state_from_credentials(crypt):
     try:
         config = json.loads(credentials)
     except:
-        print("Not a valild json file or it is ecrypted. Maybe add/remove the -e arugment?")
+        print("Not a valid json file or it is ecrypted. Maybe add/remove the -e arugment?")
         sys.exit(1)
 
     # We don't have a token cache?
