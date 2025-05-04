@@ -179,8 +179,6 @@ def fetch_token_from_cache(app):
     if cca.get_accounts:
         result = cca.acquire_token_silent(config['scopes'], account=accounts[0])
         return result["access_token"]
-    else:
-        None
 
 def build_app_state_from_credentials(crypt):
     # If the file is missing return None
@@ -203,7 +201,7 @@ def build_app_state_from_credentials(crypt):
     if config.get("token_cache") is None:
         return None
 
-    app_state = {};
+    app_state = {}
     cache = msal.SerializableTokenCache()
     cache.deserialize(config["token_cache"])
     app_state["config"] = config
@@ -234,8 +232,7 @@ def main():
     if cmdline_args.encrypt_using_fingerprint:
         gpg_args = {"gnupghome": cmdline_args.gpg_home} if cmdline_args.gpg_home else {}
         gpg = gnupg.GPG(**gpg_args)
-        crypt = {"gpg" : gpg,
-                 "fingerprint": cmdline_args.encrypt_using_fingerprint}
+        crypt = {"gpg" : gpg, "fingerprint": cmdline_args.encrypt_using_fingerprint}
 
     token = None
     app_state = build_app_state_from_credentials(crypt)
