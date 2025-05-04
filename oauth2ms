@@ -11,9 +11,9 @@
 # limitations under the License.
 
 from xdg.BaseDirectory import (
-        load_first_config,
-        save_data_path
-        )
+    load_first_config,
+    save_data_path
+)
 
 import argparse
 import webbrowser
