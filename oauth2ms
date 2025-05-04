@@ -111,7 +111,7 @@ def build_new_app_state(crypt):
     cache = msal.SerializableTokenCache()
     config = load_config()
     if config is None:
-        return None
+        return None, None
 
     if not validate_config(config):
         print(
@@ -120,7 +120,7 @@ def build_new_app_state(crypt):
             + "tenant_id, client_id, redirect_host, redirect_port, "
             + "redirect_path, scopes, client_secret"
         )
-        return None
+        return None, None
 
     state = str(uuid.uuid4())
 
@@ -132,10 +132,10 @@ def build_new_app_state(crypt):
     config["redirect_uri"] = "http://" + config['redirect_host'] + ":" + config['redirect_port'] + redirect_path
     auth_url = get_auth_url(config, cache, state)
     wsgi_app = WSGIRedirectionApp(SUCCESS_MESSAGE)
-    http_server = simple_server.make_server(config['redirect_host'],
-                                            int(config['redirect_port']),
-                                            wsgi_app,
-                                            handler_class=WSGIRequestHandler)
+    http_server = simple_server.make_server(
+        config['redirect_host'], int(config['redirect_port']), wsgi_app, handler_class=WSGIRequestHandler
+    )
+
     if cmdline_args.no_browser:
         print("Please navigate to this url: " + auth_url)
     else:
@@ -149,27 +149,27 @@ def build_new_app_state(crypt):
 
     code_key = config["redirect_uri"] + "?code"
     if code_key not in parsed_auth_response:
-        return None
+        return None, None
 
     auth_code = parsed_auth_response[code_key]
-
     result = build_msal_app(config, cache).acquire_token_by_authorization_code(
         auth_code,
         scopes=config['scopes'],
-        redirect_uri=config["redirect_uri"]);
-
+        redirect_uri=config["redirect_uri"]
+    )
 
     if result.get("access_token") is None:
-        print("Something went wrong during authorization")
-        print("Server returned: {}".format(result))
-        return None
+        print(
+            f"Something went wrong during authorization: Server returned: {result}"
+        )
+        return None, None
 
-    token = result["access_token"]
-    app = {}
-    app['config'] = config
-    app['cache'] = cache
-    app['crypt'] = crypt
-    return app, token
+    app = {
+        'config': config,
+        'cache': cache,
+        'crypt': crypt
+    }
+    return app, result["access_token"]
 
 def fetch_token_from_cache(app):
     config = app['config']
