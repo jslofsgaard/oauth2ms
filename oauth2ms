@@ -32,6 +32,7 @@ import os
 import atexit
 import base64
 import gnupg
+import ssl
 import io
 
 pp = pprint.PrettyPrinter(indent=4)
@@ -58,21 +59,32 @@ def load_config():
     config_file = load_first_config(APP_NAME, "config.json")
     if config_file is None:
         print(f"Couldn't find configuration file. Config file must be at: $XDG_CONFIG_HOME/{APP_NAME}/config.json")
-        print("Current value of $XDG_CONFIG_HOME is {}".format(os.getenv("XDG_CONFIG_HOME")))
+        print("Current value of $XDG_CONFIG_HOME is: {}".format(os.getenv("XDG_CONFIG_HOME")))
         return None
+
     return json.load(open(config_file, 'r'))
 
 def build_msal_app(config, cache = None):
+    tenant = config['tenant_id']
+    secret = config['client_secret'] or None
     return msal.ConfidentialClientApplication(
         config['client_id'],
-        authority="https://login.microsoftonline.com/" + config['tenant_id'],
-        client_credential=config['client_secret'], token_cache=cache)
+        authority=("https://login.microsoftonline.com/" + tenant + "/" if tenant else None),
+        client_credential=secret,
+        token_cache=cache
+    )
 
 def get_auth_url(config, cache, state):
     return build_msal_app(config, cache).get_authorization_request_url(
         config['scopes'],
         state=state,
-        redirect_uri=config["redirect_uri"]);
+        redirect_uri=config["redirect_uri"]
+    )
+
+def ssl_context(certf="cert.pem", keyf="key.pem"):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certf, keyf)
+    return context
 
 class WSGIRequestHandler(wsgiref.simple_server.WSGIRequestHandler):
     """Silence out the messages from the http server"""
@@ -95,48 +107,105 @@ class WSGIRedirectionApp(object):
         return [self._success_message.encode("utf-8")]
 
 def validate_config(config):
-    conditions = [
-        "tenant_id" in config,
-        "client_id" in config,
-        "redirect_host" in config,
-        "redirect_port" in config,
-        "redirect_path" in config,
-        "scopes" in config,
-        "client_secret" in config
-    ]
+    errs = {}
 
-    return all(conditions)
+    # Make sure tenant_id is a string when present
+    if "tenant_id" in config and not isinstance(config["tenant_id"], str):
+        errs["tenant_id"] = "Must be a string when present in config"
+
+    # Make sure client_id is present and is a string
+    if "client_id" not in config:
+        errs["client_id"] = "Mandatory string field"
+    elif not isinstance(config["client_id"], str):
+        errs["client_id"] = "Not a valid string"
+
+    # Make sure client_secret is a string when present
+    if "client_secret" in config and not isinstance(config["client_secret"], str):
+        errs["client_secret"] = "Must be a string when present in config"
+
+    # Make sure scopes is present and is a list of strings
+    if "scopes" not in config:
+        errs["scopes"] = "Missing required field"
+    elif not isinstance(config["scopes"], list):
+        errs["scopes"] = "Not a valid list"
+
+    scopes_errs = {}
+    for i, datum in enumerate(config["scopes"]):
+        if not isinstance(datum, str):
+            scopes_errs[i] = "Not a valid string"
+
+    if scopes_errs:
+        errs["scopes"] = scopes_errs
+
+    # Make sure redirect is present
+    if "redirect" not in config:
+        errs["redirect"] = "Missing required redirect configuration object"
+    else:
+        redirect, redirect_errs = config["redirect"], {}
+
+        # Make sure method is present and is one of 'http' or 'https'
+        if "method" not in redirect:
+            redirect_errs["method"] = "Missing required 'http' or 'https' field"
+        elif redirect["method"] not in ("http", "https"):
+            redirect_errs["method"] = "Must be one of: 'http', 'https'"
+
+        # Make sure host is present and is a string
+        if "host" not in redirect:
+            redirect_errs["host"] = "Missing required field"
+        elif not isinstance(redirect["host"], str):
+            redirect_errs["host"] = "Not a valid string"
+
+        # Make sure port is present and is an integer
+        if "port" not in redirect:
+            redirect_errs["port"] = "Missing required field"
+        elif not isinstance(redirect["port"], int):
+            redirect_errs["port"] = "Not a valid integer"
+
+        # Make sure path is present and is a string
+        if "path" not in redirect:
+            redirect_errs["path"] = "Missing required field"
+        elif not isinstance(redirect["path"], str):
+            redirect_errs["path"] = "Not a valid string"
+
+    if redirect_errs:
+        errs["redirect"] = redirect_errs
+
+    return errs or None
 
 def build_new_app_state(crypt, no_browser = False):
     cache = msal.SerializableTokenCache()
     config = load_config()
     if config is None:
-        return None, None
+        return
 
-    if not validate_config(config):
-        print(
-            "Invalid config: "
-            + "Config must contain the keys: "
-            + "tenant_id, client_id, redirect_host, redirect_port, "
-            + "redirect_path, scopes, client_secret"
-        )
-        return None, None
+    if errs := validate_config(config):
+        print(f"Invalid config: {errs}")
+        return
 
     state = str(uuid.uuid4())
 
-    redirect_path = config["redirect_path"]
+    redirect_path = config["redirect"]["path"]
     # Remove / at the end if present, and path is not just /
     if redirect_path != "/" and redirect_path[-1] == "/":
         redirect_path = redirect_path[:-1]
 
-    config["redirect_uri"] = "http://" + config['redirect_host'] + ":" + config['redirect_port'] + redirect_path
+    config["redirect_uri"] = (
+        config["redirect"]["method"]
+        + "://"
+        + config["redirect"]["host"]
+        + ":"
+        + str(config["redirect"]["port"])
+        + redirect_path
+    )
     auth_url = get_auth_url(config, cache, state)
     wsgi_app = WSGIRedirectionApp(SUCCESS_MESSAGE)
     http_server = simple_server.make_server(
-        config['redirect_host'], int(config['redirect_port']), wsgi_app, handler_class=WSGIRequestHandler
+        config["redirect"]["host"], config["redirect"]["port"], wsgi_app, handler_class=WSGIRequestHandler
     )
+    if config["redirect"]["method"] == "https":
+        http_server.socket = ssl_context().wrap_socket(http_server.socket, server_side=True)
 
-    if cmdline_args.no_browser:
+    if no_browser:
         print("Please navigate to this url: " + auth_url)
     else:
         webbrowser.open(auth_url, new=2, autoraise=True)
@@ -147,9 +216,16 @@ def build_new_app_state(crypt, no_browser = False):
     http_server.server_close()
     parsed_auth_response = parse_qs(auth_response)
 
-    code_key = config["redirect_uri"] + "?code"
+    code_key = (
+        "http://"
+        + config["redirect"]["host"]
+        + ":"
+        + str(config["redirect"]["port"])
+        + "/"
+        + "?code"
+    )
     if code_key not in parsed_auth_response:
-        return None, None
+        return
 
     auth_code = parsed_auth_response[code_key]
     result = build_msal_app(config, cache).acquire_token_by_authorization_code(
@@ -159,10 +235,8 @@ def build_new_app_state(crypt, no_browser = False):
     )
 
     if result.get("access_token") is None:
-        print(
-            f"Something went wrong during authorization: Server returned: {result}"
-        )
-        return None, None
+        print(f"Something went wrong during authorization: {result}")
+        return
 
     app = {
         'config': config,
@@ -240,7 +314,8 @@ def main(
     token = None
     app_state = build_app_state_from_credentials(crypt)
     if app_state is None:
-        app_state, token = build_new_app_state(crypt, no_browser)
+        if success := build_new_app_state(crypt, no_browser):
+            app_state, token = success
 
     if app_state is None:
         print("Something went wrong!")
