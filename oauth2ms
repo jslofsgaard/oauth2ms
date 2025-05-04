@@ -114,10 +114,12 @@ def build_new_app_state(crypt):
         return None
 
     if not validate_config(config):
-        print("Invalid config")
-        print("Config must contain the keys: " +
-            "tenant_id, client_id, redirect_host, redirect_port, " +
-            "redirect_path, scopes, client_secret")
+        print(
+            "Invalid config: "
+            + "Config must contain the keys: "
+            + "tenant_id, client_id, redirect_host, redirect_port, "
+            + "redirect_path, scopes, client_secret"
+        )
         return None
 
     state = str(uuid.uuid4())
