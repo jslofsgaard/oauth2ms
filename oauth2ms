@@ -283,10 +283,8 @@ def build_app_state_from_credentials(crypt):
     app_state["crypt"] = crypt
     return app_state
 
-"""
-Encode the xoauth 2 message based on:
-https://docs.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth#sasl-xoauth2
-"""
+# Encode the xoauth 2 message based on:
+# https://docs.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth#sasl-xoauth2
 def encode_xoauth2(app, token):
     config = app['config']
     cache = app['cache']
@@ -299,22 +297,19 @@ def encode_xoauth2(app, token):
     xoauth2_bytes = user + C_A + btoken + C_A + C_A
     return base64.b64encode(xoauth2_bytes).decode("utf-8")
 
-def main(
-    encode_xoauth2=False,
-    encrypt_using_fingerprint=None,
-    gpg_home=None,
-    no_browser=False
-):
+def main(*args):
+    args = parser.parse_args(args or None)
+
     crypt = None
-    if encrypt_using_fingerprint:
-        gpg_args = {"gnupghome": gpg_home} if gpg_home else {}
+    if args.encrypt_using_fingerprint:
+        gpg_args = {"gnupghome": args.gpg_home} if args.gpg_home else {}
         gpg = gnupg.GPG(**gpg_args)
-        crypt = {"gpg" : gpg, "fingerprint": encrypt_using_fingerprint}
+        crypt = {"gpg" : gpg, "fingerprint": args.encrypt_using_fingerprint}
 
     token = None
     app_state = build_app_state_from_credentials(crypt)
     if app_state is None:
-        if success := build_new_app_state(crypt, no_browser):
+        if success := build_new_app_state(crypt, args.no_browser):
             app_state, token = success
 
     if app_state is None:
@@ -325,7 +320,7 @@ def main(
         token = fetch_token_from_cache(app_state)
 
     if token is not None:
-        if encode_xoauth2:
+        if args.encode_xoauth2:
             print(encode_xoauth2(app_state, token))
         else:
             print(token);
@@ -344,10 +339,4 @@ def main(
 
 
 if __name__ == "__main__":
-    cmdline_args = parser.parse_args()
-    main(
-        encode_xoauth2=cmdline_args.encode_xoauth2,
-        encrypt_using_fingerprint=cmdline_args.encrypt_using_fingerprint,
-        gpg_home=cmdline_args.gpg_home,
-        no_browser=cmdline_args.no_browser
-    )
+    main()
